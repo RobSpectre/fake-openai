@@ -9,6 +9,7 @@ with configurable streaming rates and token types.
 import argparse
 import asyncio
 import json
+import random
 import time
 import uuid
 from typing import Optional, AsyncGenerator
@@ -25,17 +26,19 @@ config = {
     "tokens": "Hello, this is a fake OpenAI response!",
     "rate": None,  # tokens per second, None = no delay
     "type": "output",  # "thinking" or "output"
+    "random_pause": None,  # max random pause in seconds, None = no random pause
 }
 
 
-async def generate_tokens(tokens: str, rate: Optional[float], token_type: str) -> AsyncGenerator[str, None]:
+async def generate_tokens(tokens: str, rate: Optional[float], token_type: str, random_pause: Optional[float] = None) -> AsyncGenerator[str, None]:
     """
-    Generate tokens with optional rate limiting.
+    Generate tokens with optional rate limiting and random pauses.
 
     Args:
         tokens: The text to stream
         rate: Tokens per second (None for no delay)
         token_type: "thinking" or "output"
+        random_pause: Max random pause in seconds (None for no random pauses)
     """
     # Split into individual tokens (simple word-based splitting)
     words = tokens.split()
@@ -77,9 +80,20 @@ async def generate_tokens(tokens: str, rate: Optional[float], token_type: str) -
         # Yield the chunk in SSE format
         yield f"data: {json.dumps(chunk)}\n\n"
 
-        # Apply rate limiting if specified
+        # Calculate total delay
+        delay = 0.0
+
+        # Apply base rate limiting if specified
         if rate is not None and rate > 0:
-            await asyncio.sleep(1.0 / rate)
+            delay += 1.0 / rate
+
+        # Apply random pause if specified
+        if random_pause is not None and random_pause > 0:
+            delay += random.uniform(0, random_pause)
+
+        # Sleep if there's any delay
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     # Send final chunk
     final_chunk = {
@@ -108,7 +122,7 @@ async def chat_completions(request: Request):
     if stream:
         # Return streaming response
         return StreamingResponse(
-            generate_tokens(config["tokens"], config["rate"], config["type"]),
+            generate_tokens(config["tokens"], config["rate"], config["type"], config["random_pause"]),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -148,7 +162,8 @@ async def health():
         "config": {
             "tokens_length": len(config["tokens"]),
             "rate": config["rate"],
-            "type": config["type"]
+            "type": config["type"],
+            "random_pause": config["random_pause"]
         }
     }
 
@@ -166,7 +181,8 @@ async def root():
         "config": {
             "tokens_preview": config["tokens"][:100] + "..." if len(config["tokens"]) > 100 else config["tokens"],
             "rate": config["rate"],
-            "type": config["type"]
+            "type": config["type"],
+            "random_pause": config["random_pause"]
         }
     }
 
@@ -194,6 +210,12 @@ def main():
         help="Type of tokens to serve: 'thinking' or 'output' (default: output)"
     )
     parser.add_argument(
+        "--random-pause",
+        type=float,
+        default=None,
+        help="Maximum random pause between tokens in seconds (default: no random pause)"
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="0.0.0.0",
@@ -212,11 +234,13 @@ def main():
     config["tokens"] = args.tokens
     config["rate"] = args.rate
     config["type"] = args.type
+    config["random_pause"] = args.random_pause
 
     print(f"🚀 Starting Fake OpenAI Responses Server")
     print(f"   Tokens: {args.tokens[:100]}{'...' if len(args.tokens) > 100 else ''}")
     print(f"   Rate: {args.rate if args.rate else 'unlimited'} tokens/sec")
     print(f"   Type: {args.type}")
+    print(f"   Random pause: {f'0-{args.random_pause}s' if args.random_pause else 'disabled'}")
     print(f"   Listening on http://{args.host}:{args.port}")
     print(f"\n   OpenAI-compatible endpoint: http://{args.host}:{args.port}/v1/chat/completions")
     print(f"   Health check: http://{args.host}:{args.port}/health\n")
