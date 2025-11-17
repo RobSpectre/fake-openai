@@ -35,20 +35,69 @@ async def generate_tokens(tokens: str, rate: Optional[float], token_type: str, r
     Generate tokens with optional rate limiting and random pauses.
 
     Args:
-        tokens: The text to stream
+        tokens: The text to stream. For "both" type, use " ||| " to separate thinking from output.
         rate: Tokens per second (None for no delay)
-        token_type: "thinking" or "output"
+        token_type: "thinking", "output", or "both"
+        random_pause: Max random pause in seconds (None for no random pauses)
+    """
+    # Handle "both" type by splitting into thinking and output sections
+    if token_type == "both":
+        if " ||| " in tokens:
+            thinking_text, output_text = tokens.split(" ||| ", 1)
+        else:
+            # If no delimiter, split roughly in half
+            words = tokens.split()
+            mid = len(words) // 2
+            thinking_text = " ".join(words[:mid])
+            output_text = " ".join(words[mid:])
+
+        # Stream thinking tokens first
+        async for chunk in _stream_tokens(thinking_text, rate, "thinking", random_pause):
+            yield chunk
+
+        # Stream output tokens second
+        async for chunk in _stream_tokens(output_text, rate, "output", random_pause):
+            yield chunk
+    else:
+        # Single type streaming
+        async for chunk in _stream_tokens(tokens, rate, token_type, random_pause):
+            yield chunk
+
+    # Send final chunk
+    final_chunk = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": "gpt-4",
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": "stop"
+        }]
+    }
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+async def _stream_tokens(text: str, rate: Optional[float], content_type: str, random_pause: Optional[float] = None) -> AsyncGenerator[str, None]:
+    """
+    Internal helper to stream tokens of a specific type.
+
+    Args:
+        text: The text to stream
+        rate: Tokens per second (None for no delay)
+        content_type: "thinking" or "output"
         random_pause: Max random pause in seconds (None for no random pauses)
     """
     # Split into individual tokens (simple word-based splitting)
-    words = tokens.split()
+    words = text.split()
 
     for i, word in enumerate(words):
         # Add space before word except for first token
         token_text = word if i == 0 else f" {word}"
 
-        # Create the appropriate response chunk based on token type
-        if token_type == "thinking":
+        # Create the appropriate response chunk based on content type
+        if content_type == "thinking":
             chunk = {
                 "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
                 "object": "chat.completion.chunk",
@@ -95,21 +144,6 @@ async def generate_tokens(tokens: str, rate: Optional[float], token_type: str, r
         if delay > 0:
             await asyncio.sleep(delay)
 
-    # Send final chunk
-    final_chunk = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": "gpt-4",
-        "choices": [{
-            "index": 0,
-            "delta": {},
-            "finish_reason": "stop"
-        }]
-    }
-    yield f"data: {json.dumps(final_chunk)}\n\n"
-    yield "data: [DONE]\n\n"
-
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -131,6 +165,34 @@ async def chat_completions(request: Request):
         )
     else:
         # Return non-streaming response
+        # Handle "both" type
+        if config["type"] == "both":
+            if " ||| " in config["tokens"]:
+                thinking_text, output_text = config["tokens"].split(" ||| ", 1)
+            else:
+                words = config["tokens"].split()
+                mid = len(words) // 2
+                thinking_text = " ".join(words[:mid])
+                output_text = " ".join(words[mid:])
+
+            message = {
+                "role": "assistant",
+                "reasoning_content": thinking_text,
+                "content": output_text,
+            }
+        elif config["type"] == "thinking":
+            message = {
+                "role": "assistant",
+                "reasoning_content": config["tokens"],
+                "content": None,
+            }
+        else:  # output
+            message = {
+                "role": "assistant",
+                "content": config["tokens"],
+                "reasoning_content": None,
+            }
+
         response = {
             "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
             "object": "chat.completion",
@@ -138,11 +200,7 @@ async def chat_completions(request: Request):
             "model": "gpt-4",
             "choices": [{
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": config["tokens"] if config["type"] == "output" else None,
-                    "reasoning_content": config["tokens"] if config["type"] == "thinking" else None,
-                },
+                "message": message,
                 "finish_reason": "stop"
             }],
             "usage": {
@@ -195,7 +253,7 @@ def main():
     parser.add_argument(
         "tokens",
         type=str,
-        help="The tokens/text to serve in responses"
+        help="The tokens/text to serve in responses. For --type both, use ' ||| ' to separate thinking from output text."
     )
     parser.add_argument(
         "--rate",
@@ -205,9 +263,9 @@ def main():
     )
     parser.add_argument(
         "--type",
-        choices=["thinking", "output"],
+        choices=["thinking", "output", "both"],
         default="output",
-        help="Type of tokens to serve: 'thinking' or 'output' (default: output)"
+        help="Type of tokens to serve: 'thinking', 'output', or 'both' (default: output)"
     )
     parser.add_argument(
         "--random-pause",

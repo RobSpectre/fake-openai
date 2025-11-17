@@ -7,7 +7,7 @@ A development and testing server that mimics OpenAI's API but returns predefined
 - **OpenAI-compatible API**: Implements the `/v1/chat/completions` endpoint
 - **Configurable token streaming**: Control the rate of token delivery
 - **Random pauses**: Add realistic variable delays between tokens
-- **Token type support**: Simulate both "thinking" and "output" tokens
+- **Token type support**: Simulate "thinking", "output", or both token types in sequence
 - **Streaming and non-streaming**: Supports both streaming and non-streaming responses
 - **No actual inference**: Returns predefined text instead of doing AI inference
 
@@ -39,6 +39,20 @@ Serve thinking tokens instead of output tokens:
 
 ```bash
 python server.py "Let me think about this..." --type thinking
+```
+
+### Both Thinking and Output Tokens
+
+Serve both thinking and output tokens in sequence. Use ` ||| ` to separate thinking from output:
+
+```bash
+python server.py "First, let me analyze this problem ||| Here is the solution" --type both
+```
+
+If no delimiter is provided, the text will be automatically split in half:
+
+```bash
+python server.py "This is a long response that will be split into thinking and output" --type both
 ```
 
 ### With Random Pauses
@@ -80,9 +94,9 @@ python server.py "Your response text here" \
 
 ## Command Line Arguments
 
-- `tokens` (required): The text/tokens to serve in responses
+- `tokens` (required): The text/tokens to serve in responses. For `--type both`, use ` ||| ` to separate thinking from output text.
 - `--rate` (optional): Token delivery rate in tokens per second (default: no delay)
-- `--type` (optional): Type of tokens - "thinking" or "output" (default: "output")
+- `--type` (optional): Type of tokens - "thinking", "output", or "both" (default: "output")
 - `--random-pause` (optional): Maximum random pause between tokens in seconds (default: no random pause)
 - `--host` (optional): Host to bind to (default: "0.0.0.0")
 - `--port` (optional): Port to bind to (default: 8000)
@@ -163,7 +177,8 @@ for chunk in stream:
 - **Development**: Develop applications with predictable responses
 - **Rate limiting simulation**: Test how your application handles different token delivery rates
 - **Variable timing simulation**: Simulate realistic AI response patterns with random pauses
-- **Token type testing**: Test handling of thinking vs output tokens
+- **Token type testing**: Test handling of thinking, output, and combined token types
+- **Reasoning flow testing**: Test applications that handle both reasoning and output content
 - **Cost-free development**: Develop without incurring OpenAI API costs
 
 ## Example Sessions
@@ -194,6 +209,16 @@ python server.py "This simulates natural AI response patterns with variable timi
 ```
 
 This creates a more realistic streaming experience where tokens arrive at roughly 8 tokens/sec with random variations.
+
+### Both thinking and output tokens
+
+```bash
+python server.py "Let me break this down step by step ||| Based on my analysis, here's the answer" \
+  --rate 6 \
+  --type both
+```
+
+This will first stream the thinking tokens, then the output tokens, simulating a model that shows its reasoning process.
 
 ## License
 
